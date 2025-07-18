@@ -1,0 +1,76 @@
+
+#!/bin/bash
+
+# --- Biến Cấu Hình ---
+# Định nghĩa tên cho các file ISO và ảnh đĩa
+WIN_ISO_NAME="win.iso"
+VIRTIO_ISO_NAME="virtio.iso"
+DISK_IMAGE_NAME="nvme_disk.qcow2"
+
+# DUNG LƯỢNG Ổ ĐĨA ẢO: Bạn có thể thay đổi giá trị này.
+# Ví dụ: "90G" cho 90 Gigabyte, "100G" cho 100 Gigabyte, "50G" cho 50 Gigabyte.
+DISK_SIZE="90G" # Kích thước của đĩa ảo
+
+VM_RAM="8192M" # RAM cấp phát cho máy ảo (ví dụ: 8192M cho 8GB)
+VM_CPUS="sockets=2,cores=2,threads=1" # Cấu hình CPU
+VNC_DISPLAY=":0" # Số hiển thị VNC (ví dụ: :0 cho cổng 5900)
+
+# --- Bước 1: Tải xuống các file ISO ---
+echo "Đang tải xuống ISO Windows 10..."
+wget -O "${WIN_ISO_NAME}" https://archive.org/download/win10pro1909.752liteplusoprekin.com/Win10Pro_1909.752_LitePlus_oprekin.com.iso
+
+echo "Đang tải xuống ISO driver VirtIO..."
+wget -O "${VIRTIO_ISO_NAME}" https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/archive-virtio/virtio-win-0.1.240-1/virtio-win-0.1.240.iso
+
+# Kiểm tra xem việc tải xuống có thành công không
+if [ ! -f "${WIN_ISO_NAME}" ]; then
+    echo "Lỗi: Tải xuống ISO Windows thất bại. Đang thoát."
+    exit 1
+fi
+if [ ! -f "${VIRTIO_ISO_NAME}" ]; then
+    echo "Lỗi: Tải xuống ISO VirtIO thất bại. Đang thoát."
+    exit 1
+fi
+
+# --- Bước 2: Cập nhật hệ thống và cài đặt QEMU/KVM ---
+echo "Đang cập nhật danh sách gói và cài đặt qemu-kvm..."
+sudo apt update -y
+sudo apt install qemu-kvm -y
+
+# Kiểm tra xem việc cài đặt qemu-kvm có thành công không
+if ! command -v qemu-system-x86_64 &> /dev/null; then
+    echo "Lỗi: Cài đặt qemu-kvm thất bại. Đang thoát."
+    exit 1
+fi
+
+# --- Bước 3: Tạo ảnh đĩa QCOW2 ---
+echo "Đang tạo ảnh đĩa QCOW2: ${DISK_IMAGE_NAME} với kích thước ${DISK_SIZE}..."
+# Lệnh 'qemu-img create' sử dụng biến DISK_SIZE để xác định dung lượng.
+qemu-img create -f qcow2 "${DISK_IMAGE_NAME}" "${DISK_SIZE}"
+
+# Kiểm tra xem việc tạo ảnh đĩa có thành công không
+if [ ! -f "${DISK_IMAGE_NAME}" ]; then
+    echo "Lỗi: Tạo ảnh đĩa thất bại. Đang thoát."
+    exit 1
+fi
+
+# --- Bước 4: Khởi động máy ảo QEMU/KVM ---
+echo "Đang khởi động máy ảo QEMU/KVM..."
+echo "Máy chủ VNC sẽ khả dụng tại ${VNC_DISPLAY} (thường là cổng 5900 + số hiển thị)."
+
+sudo qemu-system-x86_64 \
+-M q35,nvdimm=on \
+-usb -device qemu-xhci -device usb-tablet -device usb-kbd \
+-cpu host,hv-time,hv-relaxed,hv-vapic,hv-spinlocks=0x1fff,kvm=on,+invtsc,migratable=off,+hypervisor,hv-vendor-id=nvidia \
+-smp "${VM_CPUS}" \
+-m "${VM_RAM}" \
+-drive file="${WIN_ISO_NAME}",media=cdrom,if=none,id=cdrom0 -device ide-cd,drive=cdrom0,bus=ide.0 \
+-drive file="${VIRTIO_ISO_NAME}",media=cdrom,if=none,id=cdrom1 -device ide-cd,drive=cdrom1,bus=ide.1 \
+-drive file="${DISK_IMAGE_NAME}",if=none,id=disk0 \
+-device virtio-blk-pci,drive=disk0 \
+-vga virtio -device virtio-net-pci,netdev=n0 -netdev user,id=n0 \
+-accel kvm -device virtio-serial-pci -boot d,menu=on -device intel-iommu -vnc "${VNC_DISPLAY}" -daemonize
+
+echo "Máy ảo QEMU/KVM đã được khởi động ở chế độ daemonized."
+echo "Bạn có thể kết nối đến máy chủ VNC bằng một ứng dụng khách VNC."
+echo "Để dừng máy ảo, bạn có thể cần tìm ID tiến trình của nó (ví dụ: dùng 'ps aux | grep qemu') và kill nó."
