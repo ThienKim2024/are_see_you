@@ -1,0 +1,12 @@
+sudo qemu-system-x86_64 \
+-M q35,nvdimm=on \
+-usb -device qemu-xhci -device usb-tablet -device usb-kbd \
+-cpu host,hv-time,hv-relaxed,hv-vapic,hv-spinlocks=0x1fff,kvm=on,+invtsc,migratable=off,+hypervisor,hv-vendor-id=nvidia \
+-smp sockets=1,cores=4,threads=1 \
+-m 8192M \
+-drive file=win.iso,media=cdrom,if=none,id=cdrom0 -device ide-cd,drive=cdrom0,bus=ide.0 \
+-drive file=virtio.iso,media=cdrom,if=none,id=cdrom1 -device ide-cd,drive=cdrom1,bus=ide.1 \
+-drive file=nvme_disk.qcow2,if=none,id=disk0 \
+-device virtio-blk-pci,drive=disk0 \
+-vga virtio -device virtio-net-pci,netdev=n0 -netdev user,id=n0 \
+-accel kvm -device virtio-serial-pci -boot d,menu=on -device intel-iommu -vnc :0 -daemonize
