@@ -1,0 +1,95 @@
+#!/bin/bash
+
+# Tên tệp ISO và đĩa ảo
+WIN_ISO="win.iso"
+VIRTIO_ISO="virtio.iso"
+DISK_IMAGE="nvme_disk.qcow2"
+DISK_SIZE="100G" # Kích thước đĩa ảo
+
+# URL tải xuống
+WIN_ISO_URL="https://archive.org/download/win10pro1909.752liteplusoprekin.com/Win10Pro_1909.752_LitePlus_oprekin.com.iso"
+VIRTIO_ISO_URL="https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/archive-virtio/virtio-win-0.1.240-1/virtio-win-0.1.240.iso"
+
+echo "Bắt đầu quá trình tự động hóa thiết lập QEMU/KVM cho Windows..."
+
+# Bước 1: Tải xuống các tệp ISO
+echo "1. Đang tải xuống tệp Windows ISO ($WIN_ISO)..."
+wget -O "$WIN_ISO" "$WIN_ISO_URL"
+if [ $? -ne 0 ]; then
+    echo "Lỗi: Không thể tải xuống $WIN_ISO. Vui lòng kiểm tra kết nối internet hoặc URL."
+    exit 1
+fi
+echo "$WIN_ISO đã tải xuống thành công."
+
+echo "2. Đang tải xuống tệp VirtIO ISO ($VIRTIO_ISO)..."
+wget -O "$VIRTIO_ISO" "$VIRTIO_ISO_URL"
+if [ $? -ne 0 ]; then
+    echo "Lỗi: Không thể tải xuống $VIRTIO_ISO. Vui lòng kiểm tra kết nối internet hoặc URL."
+    exit 1
+fi
+echo "$VIRTIO_ISO đã tải xuống thành công."
+
+# Bước 2: Cập nhật hệ thống và cài đặt QEMU/KVM
+echo "3. Đang cập nhật danh sách gói và cài đặt QEMU/KVM..."
+sudo apt update
+if [ $? -ne 0 ]; then
+    echo "Lỗi: Không thể cập nhật danh sách gói. Vui lòng kiểm tra kết nối internet hoặc kho lưu trữ."
+    exit 1
+fi
+sudo apt install qemu-kvm -y
+if [ $? -ne 0 ]; then
+    echo "Lỗi: Không thể cài đặt qemu-kvm. Vui lòng kiểm tra quyền hoặc kho lưu trữ."
+    exit 1
+fi
+echo "QEMU/KVM đã được cài đặt thành công."
+
+# Bước 3: Tạo hình ảnh đĩa QCOW2
+echo "4. Đang tạo hình ảnh đĩa QCOW2 ($DISK_IMAGE) với kích thước $DISK_SIZE..."
+qemu-img create -f qcow2 "$DISK_IMAGE" "$DISK_SIZE"
+if [ $? -ne 0 ]; then
+    echo "Lỗi: Không thể tạo hình ảnh đĩa $DISK_IMAGE."
+    exit 1
+fi
+echo "Hình ảnh đĩa $DISK_IMAGE đã được tạo thành công."
+
+# Bước 4: Khởi động máy ảo QEMU
+echo "5. Đang khởi động máy ảo QEMU. Máy ảo sẽ chạy ở chế độ nền (daemonize)."
+echo "Bạn có thể kết nối đến máy ảo bằng VNC client tại địa chỉ IP của máy chủ của bạn và cổng 5900 (ví dụ: vncviewer your_server_ip:0)."
+
+sudo qemu-system-x86_64 \
+    -M q35,nvdimm=on \
+    -usb -device qemu-xhci -device usb-tablet -device usb-kbd \
+    -cpu host,hv-time,hv-relaxed,hv-vapic,hv-spinlocks=0x1fff,kvm=on,+invtsc,migratable=off,+hypervisor,hv-vendor-id=nvidia \
+    -smp sockets=1,cores=4,threads=1 \
+    -m 8192M \
+    -drive file="$WIN_ISO",media=cdrom,if=none,id=cdrom0 -device ide-cd,drive=cdrom0,bus=ide.0 \
+    -drive file="$VIRTIO_ISO",media=cdrom,if=none,id=cdrom1 -device ide-cd,drive=cdrom1,bus=ide.1 \
+    -drive file="$DISK_IMAGE",if=none,id=disk0 \
+    -device virtio-blk-pci,drive=disk0 \
+    -vga virtio -device virtio-net-pci,netdev=n0 -netdev user,id=n0 \
+    -accel kvm -device virtio-serial-pci -boot d,menu=on -device intel-iommu -vnc :0 -daemonize
+
+if [ $? -ne 0 ]; then
+    echo "Lỗi: Không thể khởi động máy ảo QEMU. Vui lòng kiểm tra các tham số QEMU hoặc quyền KVM."
+    exit 1
+fi
+
+echo "Máy ảo QEMU đã được khởi động thành công ở chế độ nền."
+
+# Bước 5: Tạo SSH Reverse Tunnel với Pinggy.io
+echo "6. Đang tạo SSH Reverse Tunnel qua pinggy.io để truy cập VNC từ xa."
+echo "Lệnh này sẽ chạy ở chế độ nền. Bạn sẽ thấy địa chỉ truy cập VNC từ pinggy.io trong đầu ra của terminal."
+echo "Nếu bạn không thấy địa chỉ, hãy kiểm tra nhật ký SSH hoặc truy cập trang web pinggy.io để biết thêm chi tiết."
+
+# Sử dụng -fN để chạy SSH ở chế độ nền và không thực thi lệnh từ xa
+ssh -p 443 -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -R0:127.0.0.1:5900 tcp@a.pinggy.io -fN
+if [ $? -ne 0 ]; then
+    echo "Cảnh báo: Không thể thiết lập SSH tunnel. Vui lòng kiểm tra kết nối internet hoặc dịch vụ pinggy.io."
+else
+    echo "SSH tunnel đã được thiết lập thành công."
+    echo "Bạn có thể kiểm tra các kết nối pinggy.io của mình bằng cách truy cập trang web pinggy.io."
+fi
+
+echo "Quá trình tự động hóa hoàn tất."
+echo "Bạn có thể kiểm tra trạng thái máy ảo QEMU bằng lệnh: ps aux | grep qemu"
+echo "Để dừng máy ảo, bạn có thể tìm PID của nó và dùng lệnh: sudo kill <PID>"
